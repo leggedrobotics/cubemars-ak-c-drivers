@@ -1,7 +1,7 @@
 #include "ak_mit.h"
 
-float fminf(float a, float b);
-float fmaxf(float a, float b);
+float fminf(float a, float b) { return (a < b) ? a : b; }
+float fmaxf(float a, float b) { return (a > b) ? a : b; }
 
 inline int float_to_uint(float x, float x_min, float x_max, unsigned int bits) {
     float span = x_max - x_min;

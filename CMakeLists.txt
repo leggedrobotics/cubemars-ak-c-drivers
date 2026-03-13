@@ -5,6 +5,8 @@ project(cubemars-drivers C)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+find_package(Curses REQUIRED)
+
 # Inference library
 
 file(GLOB LIB_SOURCES src/*.c)
@@ -25,7 +27,13 @@ add_executable(demo ${EXAMPLE_SOURCES})
 target_link_libraries(demo
     PRIVATE
         cubemars-drivers
+        ${CURSES_LIBRARIES}
 )
+
+target_include_directories(demo PRIVATE ${CURSES_INCLUDE_DIRS})
+
+# ncurses and SocketCAN headers trigger -Wpedantic/-Wshadow/-Wconversion
+target_compile_options(demo PRIVATE -Wno-pedantic -Wno-shadow -Wno-conversion)
 
 # Compiler options and static analysis
 
