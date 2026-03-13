@@ -121,6 +121,56 @@ printf("pos=%.2f deg  speed=%d ERPM  current=%.2f A  temp=%d°C\n",
        fb.position, fb.speed, fb.current, fb.temperature);
 ```
 
+### STM32 Nucleo (HAL bxCAN) — send and receive a position command
+
+The library has no OS dependencies, so the same message-building functions work on bare metal. Only the transmit/receive calls change.
+
+![alt text](docs/image.png)
+
+**Servo mode — position command:**
+
+```c
+#include "ak_servo.h"
+#include "stm32f4xx_hal.h"   // adjust for your series
+
+extern CAN_HandleTypeDef hcan1;
+
+void send_position(uint8_t motor_id, float deg)
+{
+    AKMotorServoMessage msg = generate_position_message(motor_id, deg);
+
+    CAN_TxHeaderTypeDef hdr = {
+        .ExtId = msg.extended_id,
+        .IDE   = CAN_ID_EXT,
+        .RTR   = CAN_RTR_DATA,
+        .DLC   = msg.len,
+    };
+    uint32_t mailbox;
+    HAL_CAN_AddTxMessage(&hcan1, &hdr, msg.data, &mailbox);
+}
+```
+
+**Receiving feedback (polling):**
+
+```c
+void poll_feedback(void)
+{
+    if (HAL_CAN_GetRxFifoFillLevel(&hcan1, CAN_RX_FIFO0) == 0)
+        return;
+
+    CAN_RxHeaderTypeDef hdr;
+    uint8_t rx[8];
+    HAL_CAN_GetRxMessage(&hcan1, CAN_RX_FIFO0, &hdr, rx);
+
+    ServoCANFeedback fb = decode_servo_can_feedback(rx);
+    // fb.position (deg), fb.speed (ERPM), fb.current (A), fb.temperature (°C)
+}
+```
+
+Configure the CAN peripheral for 1 Mbit/s in CubeMX (or manually set the prescaler/timing registers), and add an acceptance filter that passes the motor's feedback frame ID before calling `HAL_CAN_Start()`.
+
+---
+
 ### Demo TUI
 
 The `demo` binary is a fully interactive ncurses application for exploring and testing motor commands without writing any code.
@@ -143,4 +193,3 @@ Key bindings inside the TUI:
 | `q` | Quit |
 
 The three right-hand panels show the editable parameters for the selected command, the last transmitted CAN frame, and the latest decoded motor feedback in real time.
-
