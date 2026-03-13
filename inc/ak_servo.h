@@ -1,8 +1,12 @@
 #pragma once
-#include "helpers.h"
+
+typedef unsigned char uint8_t;
+typedef unsigned int uint32_t;
+typedef signed char int8_t;
+typedef signed int int32_t;
+typedef short int16_t;
 
 void buffer_append_int32(uint8_t* buf, int32_t number, int32_t* index);
-
 void buffer_append_int16(uint8_t* buf, int16_t number, int32_t* index);
 
 typedef struct {
