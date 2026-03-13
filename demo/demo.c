@@ -444,7 +444,6 @@ static void do_send(AppState *s)
     uint32_t can_id = 0;
     uint8_t  data[8]; memset(data, 0, sizeof(data));
     uint8_t  len    = 0;
-    CtrlMode fmode  = CMDS[s->selected].mode;
 
     switch (s->selected) {
     case 0: { AKMotorServoMessage m = generate_duty_message(s->motor_id, (float)p[0]);
@@ -487,27 +486,7 @@ static void do_send(AppState *s)
         return;
     }
 
-    struct can_frame rx;
-    int r = can_recv_frame(s->can_sock, &rx, 100);
-    if (r == 1) {
-        if (fmode == MODE_SERVO) {
-            s->servo_fb       = decode_servo_can_feedback(rx.data);
-            s->servo_fb_valid = 1;
-            s->mit_fb_valid   = 0;
-        } else {
-            decode_mit_fb(rx.data, &s->mit_pos, &s->mit_vel, &s->mit_torque);
-            s->mit_fb_valid   = 1;
-            s->servo_fb_valid = 0;
-        }
-        snprintf(s->status_msg, sizeof(s->status_msg),
-                 "Sent '%s' — feedback received", CMDS[s->selected].label);
-    } else if (r == 0) {
-        snprintf(s->status_msg, sizeof(s->status_msg),
-                 "Sent '%s' — no feedback (timeout)", CMDS[s->selected].label);
-    } else {
-        snprintf(s->status_msg, sizeof(s->status_msg),
-                 "Sent '%s' — recv error: %s", CMDS[s->selected].label, strerror(errno));
-    }
+    snprintf(s->status_msg, sizeof(s->status_msg), "Sent '%s'", CMDS[s->selected].label);
     s->status_err = 0;
 }
 
@@ -752,11 +731,11 @@ static void draw_right_panel(const AppState *s, int rows, int cols)
         mvaddch(end2, rx - 1, ACS_LTEE);
     }
 
-    /* ── Feedback ── */
+    /* ── Motor Status ── */
     {
         int y = HDR_H + third * 2 + 1;
         attron(A_UNDERLINE);
-        mvprintw(y, rx + 1, "Last Feedback");
+        mvprintw(y, rx + 1, "Motor Status");
         attroff(A_UNDERLINE);
         y++;
         if (s->servo_fb_valid) {
@@ -830,6 +809,8 @@ int main(void)
         init_pair(2, COLOR_GREEN, COLOR_BLACK);
     }
 
+    timeout(50);  /* non-blocking getch: refresh feedback at ~20 Hz */
+
     s.can_sock = can_open(s.iface);
     if (s.can_sock < 0) {
         snprintf(s.status_msg, sizeof(s.status_msg),
@@ -896,6 +877,26 @@ int main(void)
             break;
 
         default: break;
+        }
+
+        /* ── continuous feedback polling ── */
+        if (s.can_sock >= 0) {
+            struct can_frame rx;
+            while (can_recv_frame(s.can_sock, &rx, 0) == 1) {
+                int is_eff = (rx.can_id & CAN_EFF_FLAG) ? 1 : 0;
+                uint32_t id = rx.can_id & (is_eff ? CAN_EFF_MASK : CAN_SFF_MASK);
+                if (!is_eff && (uint8_t)id == s.motor_id) {
+                    /* MIT feedback: standard frame, ID == motor_id */
+                    decode_mit_fb(rx.data, &s.mit_pos, &s.mit_vel, &s.mit_torque);
+                    s.mit_fb_valid   = 1;
+                    s.servo_fb_valid = 0;
+                } else if (is_eff && (uint8_t)(id & 0xFF) == s.motor_id) {
+                    /* Servo feedback: extended frame, lower 8 bits == motor_id */
+                    s.servo_fb       = decode_servo_can_feedback(rx.data);
+                    s.servo_fb_valid = 1;
+                    s.mit_fb_valid   = 0;
+                }
+            }
         }
     }
 
