@@ -108,6 +108,7 @@ typedef struct {
     /* stats */
     long frames_sent;
     int  serial_ok;
+    int  motors_enabled; /* 1 if MIT enter has been sent */
 
     /* status bar */
     char status_msg[128];
@@ -320,6 +321,38 @@ static void dispatch_can(NNAppState *s)
             nn_can_send(s->can_sock, 1, msg.extended_id, msg.data, msg.len);
         }
         s->frames_sent++;
+    }
+}
+
+/* Send MIT enter or exit to every enabled MIT-mode mapping. */
+static void send_mit_motor_mode(NNAppState *s, int enable)
+{
+    if (s->can_sock < 0) {
+        snprintf(s->status_msg, sizeof(s->status_msg),
+                 "CAN not connected — press [c] or [u] to configure");
+        s->status_err = 1;
+        return;
+    }
+    int count = 0;
+    for (int i = 0; i < s->n_mappings; i++) {
+        const OutputMapping *m = &s->mappings[i];
+        if (!m->enabled || m->motor_type != MOTOR_MIT) continue;
+        AKMotorMITMessage msg = enable
+            ? generate_mit_enter_message(m->can_id)
+            : generate_mit_exit_message(m->can_id);
+        nn_can_send(s->can_sock, 0, (uint32_t)msg.standard_id, msg.data, msg.len);
+        count++;
+    }
+    s->motors_enabled = enable;
+    if (count == 0) {
+        snprintf(s->status_msg, sizeof(s->status_msg),
+                 "No enabled MIT mappings to %s", enable ? "enter" : "exit");
+        s->status_err = 1;
+    } else {
+        snprintf(s->status_msg, sizeof(s->status_msg),
+                 "MIT motor mode %s (%d motor%s)",
+                 enable ? "ENABLED" : "DISABLED", count, count == 1 ? "" : "s");
+        s->status_err = 0;
     }
 }
 
@@ -1112,6 +1145,18 @@ static void draw_output_panel(const NNAppState *s, int rows, int cols)
         y++;
     }
 
+    if (y < bot) {
+        move(y, rx + 1);
+        printw("MIT motors: ");
+        if (s->motors_enabled) attron(COLOR_PAIR(2) | A_BOLD);
+        else                   attron(COLOR_PAIR(1));
+        printw("%s", s->motors_enabled ? "ENABLED " : "DISABLED");
+        if (s->motors_enabled) attroff(COLOR_PAIR(2) | A_BOLD);
+        else                   attroff(COLOR_PAIR(1));
+        clrtoeol();
+        y++;
+    }
+
     for (; y < bot; y++) { move(y, rx); clrtoeol(); }
 }
 
@@ -1124,7 +1169,7 @@ static void draw_status(const NNAppState *s, int rows, int cols)
     clrtoeol();
     attron(A_DIM);
     printw("  Tab:mode  Spc:send(active)  p:port  n:dims  i:inputs  "
-           "a:add  e:edit  Del:del  k:MIT  s:scan  c:CAN  u:up  d:down  q:quit");
+           "a:add  e:edit  Del:del  k:MIT  m:motor  s:scan  c:CAN  u:up  d:down  q:quit");
     attroff(A_DIM);
 
     if (s->status_msg[0]) {
@@ -1277,6 +1322,10 @@ int main(void)
                 snprintf(s.status_msg, sizeof(s.status_msg), "Mapping deleted");
                 s.status_err = 0;
             }
+            break;
+
+        case 'm': case 'M':
+            send_mit_motor_mode(&s, s.motors_enabled ? 0 : 1);
             break;
 
         case 'k': case 'K':

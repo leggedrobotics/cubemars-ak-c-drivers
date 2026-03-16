@@ -30,6 +30,11 @@ target_link_libraries(nn_demo PRIVATE cubemars-drivers ${CURSES_LIBRARIES})
 target_include_directories(nn_demo PRIVATE ${CURSES_INCLUDE_DIRS})
 target_compile_options(nn_demo PRIVATE -Wno-pedantic -Wno-shadow -Wno-conversion)
 
+add_executable(serial_demo demo/serial_demo.c)
+target_link_libraries(serial_demo PRIVATE cubemars-drivers ${CURSES_LIBRARIES})
+target_include_directories(serial_demo PRIVATE ${CURSES_INCLUDE_DIRS})
+target_compile_options(serial_demo PRIVATE -Wno-pedantic -Wno-shadow -Wno-conversion)
+
 # Compiler options and static analysis
 
 add_compile_options(
