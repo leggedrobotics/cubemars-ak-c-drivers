@@ -276,6 +276,117 @@ static void iface_down(AppState *s)
     }
 }
 
+/* ── CAN ID scan ────────────────────────────────────────────────────────── */
+
+static void can_scan_popup(AppState *s)
+{
+    if (s->can_sock < 0) {
+        snprintf(s->status_msg, sizeof(s->status_msg),
+                 "Not connected — bring interface up first");
+        s->status_err = 1;
+        return;
+    }
+
+    int rows, cols;
+    getmaxyx(stdscr, rows, cols);
+
+    int pop_h = 20, pop_w = 50;
+    WINDOW *pop = newwin(pop_h, pop_w,
+                         (rows - pop_h) / 2, (cols - pop_w) / 2);
+    keypad(pop, TRUE);
+    nodelay(pop, TRUE);
+    box(pop, 0, 0);
+    mvwprintw(pop, 0, 2, " CAN ID Scan ");
+
+    uint32_t found_id[64];
+    int      found_eff[64];
+    int      n_found = 0;
+
+    struct timeval t_start, t_now;
+    gettimeofday(&t_start, NULL);
+    const int scan_ms = 3000;
+    int bar_w = pop_w - 6;
+
+    /* ── scan loop: exits when time is up or Esc ── */
+    for (;;) {
+        gettimeofday(&t_now, NULL);
+        int elapsed_ms = (int)((t_now.tv_sec  - t_start.tv_sec)  * 1000 +
+                               (t_now.tv_usec - t_start.tv_usec) / 1000);
+        if (elapsed_ms >= scan_ms) break;
+        int remaining_ms = scan_ms - elapsed_ms;
+
+        int filled = (elapsed_ms * bar_w) / scan_ms;
+        if (filled > bar_w) filled = bar_w;
+        mvwprintw(pop, 2, 2, "Listening... %d.%ds remaining   ",
+                  remaining_ms / 1000, (remaining_ms % 1000) / 100);
+        wmove(pop, 3, 2);
+        waddch(pop, '[');
+        for (int i = 0; i < bar_w; i++)
+            waddch(pop, i < filled ? ACS_CKBOARD : ' ');
+        waddch(pop, ']');
+
+        mvwprintw(pop, 5, 2, "Found %d ID(s):", n_found);
+        for (int i = 0; i < n_found && i < pop_h - 9; i++) {
+            uint32_t mid = found_eff[i] ? (found_id[i] & 0xFF) : found_id[i];
+            mvwprintw(pop, 6 + i, 4, "0x%03X (%3d)  %s",
+                      mid, mid,
+                      found_eff[i] ? "Servo/EFF" : "MIT/SFF  ");
+        }
+        mvwprintw(pop, pop_h - 2, 2, "[Esc] stop early");
+        wrefresh(pop);
+
+        if (wgetch(pop) == 27) break;
+
+        struct can_frame f;
+        int r = can_recv_frame(s->can_sock, &f, 50);
+        if (r == 1) {
+            int is_eff  = (f.can_id & CAN_EFF_FLAG) ? 1 : 0;
+            uint32_t id = f.can_id & (is_eff ? CAN_EFF_MASK : CAN_SFF_MASK);
+            int seen = 0;
+            for (int i = 0; i < n_found; i++) {
+                if (found_id[i] == id && found_eff[i] == is_eff) { seen = 1; break; }
+            }
+            if (!seen && n_found < 64) {
+                found_id[n_found]  = id;
+                found_eff[n_found] = is_eff;
+                n_found++;
+            }
+        }
+    }
+
+    /* ── results screen: blocking wait for any key ── */
+    nodelay(pop, FALSE);
+    werase(pop);
+    box(pop, 0, 0);
+    mvwprintw(pop, 0, 2, " CAN ID Scan: Results ");
+    wmove(pop, 3, 2);
+    waddch(pop, '[');
+    for (int i = 0; i < bar_w; i++) waddch(pop, ACS_CKBOARD);
+    waddch(pop, ']');
+    mvwprintw(pop, 2, 2, "Scan complete. Found %d ID(s):", n_found);
+    if (n_found == 0) {
+        mvwprintw(pop, 5, 4, "(no frames received)");
+    } else {
+        for (int i = 0; i < n_found && i < pop_h - 9; i++) {
+            uint32_t mid = found_eff[i] ? (found_id[i] & 0xFF) : found_id[i];
+            mvwprintw(pop, 5 + i, 4, "0x%03X (%3d)  %s",
+                      mid, mid,
+                      found_eff[i] ? "Servo/EFF" : "MIT/SFF  ");
+        }
+    }
+    mvwprintw(pop, pop_h - 2, 2, "[any key] close");
+    wrefresh(pop);
+    wgetch(pop);
+
+    snprintf(s->status_msg, sizeof(s->status_msg),
+             "Scan complete: %d ID(s) found", n_found);
+    s->status_err = 0;
+
+    delwin(pop);
+    touchwin(stdscr);
+    refresh();
+}
+
 /* ── live CAN dump ──────────────────────────────────────────────────────── */
 
 typedef struct {
@@ -768,7 +879,7 @@ static void draw_status(const AppState *s, int rows, int cols)
     move(rows - 1, 0);
     clrtoeol();
     attron(A_DIM);
-    printw("  [Arrows] Nav  [Enter] Send  [i] Iface  [u] Up  [d] Down  [D] Dump  [m] Motor ID  [q] Quit");
+    printw("  [Arrows] Nav  [Enter] Send  [i] Iface  [u] Up  [d] Down  [D] Dump  [s] Scan  [m] ID  [q] Quit");
     attroff(A_DIM);
 
     if (s->status_msg[0]) {
@@ -870,6 +981,10 @@ int main(void)
 
         case 'D':
             can_dump_popup(&s);
+            break;
+
+        case 's': case 'S':
+            can_scan_popup(&s);
             break;
 
         case 'm': case 'M':
