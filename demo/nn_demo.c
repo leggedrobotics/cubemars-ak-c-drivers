@@ -112,9 +112,11 @@ typedef struct {
     MITGlobals mit;
 
     /* stats */
-    long frames_sent;
-    int  serial_ok;
-    int  motors_enabled; /* 1 if MIT enter has been sent */
+    long   frames_sent;
+    int    serial_ok;
+    int    motors_enabled; /* 1 if MIT enter has been sent */
+    double last_infer_ms;  /* last serial round-trip latency (ms) */
+    double infer_hz;       /* inferred inference frequency (Hz) */
 
     /* status bar */
     char status_msg[128];
@@ -303,9 +305,31 @@ static int serial_exchange(NNAppState *s)
 {
     size_t in_bytes  = (size_t)s->num_inputs  * sizeof(float);
     size_t out_bytes = (size_t)s->num_outputs * sizeof(float);
+
+    struct timeval t0, t1;
+    gettimeofday(&t0, NULL);
+
     if (serial_write_exact(s->serial_fd, s->input_vector, in_bytes) < 0)
         return -1;
-    return serial_read_exact(s->serial_fd, s->output_vector, out_bytes, 40);
+    int r = serial_read_exact(s->serial_fd, s->output_vector, out_bytes, 40);
+
+    if (r == 0) {
+        gettimeofday(&t1, NULL);
+        double elapsed_ms = (double)(t1.tv_sec  - t0.tv_sec)  * 1000.0
+                          + (double)(t1.tv_usec - t0.tv_usec) / 1000.0;
+        /* Ignore implausibly small samples (kernel scheduling noise). */
+        if (elapsed_ms > 0.5) {
+            double raw_hz = 1000.0 / elapsed_ms;
+            if (s->infer_hz <= 0.0) {
+                s->infer_hz = raw_hz;
+            } else {
+                /* EMA: weight new sample at 15 %, keep 85 % of history. */
+                s->infer_hz = 0.15 * raw_hz + 0.85 * s->infer_hz;
+            }
+            s->last_infer_ms = 1000.0 / s->infer_hz;
+        }
+    }
+    return r;
 }
 
 /* ── CAN dispatch ───────────────────────────────────────────────────────── */
@@ -1183,6 +1207,8 @@ static void draw_output_panel(const NNAppState *s, int rows, int cols)
     if (s->serial_ok) attroff(COLOR_PAIR(2));
     else              attroff(COLOR_PAIR(1));
     printw("   Frames sent: %ld", s->frames_sent);
+    if (s->infer_hz > 0.0)
+        printw("   %.1f Hz (%.2f ms)", s->infer_hz, s->last_infer_ms);
     clrtoeol();
     y++;
 
