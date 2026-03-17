@@ -84,7 +84,7 @@ static const CmdDef CMDS[] = {
     { "MIT Command",   MODE_MIT,   5,
       {"p_des",  "v_des",    "kp",     "kd",   "t_ff"},
       {"+-12.5 rad","+-v_max","0..500","0..5","+-t_max N*m"},
-      {0.0, 0.0, 10.0, 1.0, 0.0} },
+      {0.0, 0.0, 1.0, 0.9, 0.0} },
 };
 #define N_CMDS (int)(sizeof(CMDS) / sizeof(CMDS[0]))
 #define MIT_START_IDX 7

@@ -29,9 +29,11 @@
 #include <linux/can/raw.h>
 #include <net/if.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/time.h>
+#include <sys/un.h>
 #include <termios.h>
 #include <fcntl.h>
 
@@ -70,13 +72,17 @@ typedef struct {
 
 typedef struct { float kp; float kd; float t_ff; } MITGlobals;
 
-typedef enum { OP_ACTIVE = 0, OP_PASSIVE = 1 } OpMode;
+typedef enum { OP_ACTIVE = 0, OP_PIPE = 1 } OpMode;
 
 typedef struct {
     /* serial */
     char serial_port[SERIAL_PORT_MAX];
     int  serial_baud;
     int  serial_fd;
+
+    /* pipe */
+    int  pipe_server_fd; /* Unix socket listener in pipe mode, else -1 */
+    int  pipe_client_fd; /* accepted Python client connection, else -1 */
 
     /* CAN */
     char can_iface[16];
@@ -91,8 +97,8 @@ typedef struct {
     float *input_vector;
     float *output_vector;
 
-    /* passive mode partial-frame accumulation */
-    int serial_rx_offset;
+    /* pipe mode: partial input-frame accumulation from Python client */
+    int pipe_input_offset;
 
     /* mapping table */
     OutputMapping mappings[MAX_MAPPINGS];
@@ -269,6 +275,27 @@ static ssize_t serial_read_nonblock(int fd, void *buf, size_t len)
     return read(fd, buf, len);
 }
 
+/* ── Unix socket pipe server ────────────────────────────────────────────── */
+
+#define PIPE_SOCKET_PATH "/tmp/nn_demo.sock"
+
+/* Create a non-blocking Unix domain socket server. Returns listener fd or -1. */
+static int open_pipe_server(const char *path)
+{
+    int fd = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (fd < 0) return -1;
+    struct sockaddr_un addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strncpy(addr.sun_path, path, sizeof(addr.sun_path) - 1);
+    unlink(path);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) { close(fd); return -1; }
+    chmod(path, 0666);
+    if (listen(fd, 1) < 0) { close(fd); return -1; }
+    fcntl(fd, F_SETFL, O_NONBLOCK);
+    return fd;
+}
+
 /* ── NN protocol ────────────────────────────────────────────────────────── */
 
 /* ACTIVE: write inputs, blocking-read outputs (40 ms budget). */
@@ -279,25 +306,6 @@ static int serial_exchange(NNAppState *s)
     if (serial_write_exact(s->serial_fd, s->input_vector, in_bytes) < 0)
         return -1;
     return serial_read_exact(s->serial_fd, s->output_vector, out_bytes, 40);
-}
-
-/* PASSIVE: non-blocking drain, accumulate into output_vector.
- * Returns 1 when a full frame is complete, 0 if partial/nothing, -1 on error. */
-static int serial_passive_read(NNAppState *s)
-{
-    size_t out_bytes = (size_t)s->num_outputs * sizeof(float);
-    uint8_t *dest    = (uint8_t *)s->output_vector + s->serial_rx_offset;
-    size_t remaining = out_bytes - (size_t)s->serial_rx_offset;
-
-    ssize_t n = serial_read_nonblock(s->serial_fd, dest, remaining);
-    if (n < 0) return -1;
-    if (n == 0) return 0;
-    s->serial_rx_offset += (int)n;
-    if (s->serial_rx_offset >= (int)out_bytes) {
-        s->serial_rx_offset = 0;
-        return 1;
-    }
-    return 0;
 }
 
 /* ── CAN dispatch ───────────────────────────────────────────────────────── */
@@ -322,6 +330,34 @@ static void dispatch_can(NNAppState *s)
         }
         s->frames_sent++;
     }
+}
+
+/* PIPE: non-blocking accumulate input_vector from Python client.
+ * When a full input frame arrives: serial_exchange with STM32, write outputs
+ * back to Python, dispatch CAN.
+ * Returns 1 on full round-trip, 0 if partial/nothing, -1 on error. */
+static int pipe_io(NNAppState *s)
+{
+    size_t in_bytes  = (size_t)s->num_inputs * sizeof(float);
+    uint8_t *dest    = (uint8_t *)s->input_vector + s->pipe_input_offset;
+    size_t remaining = in_bytes - (size_t)s->pipe_input_offset;
+
+    ssize_t n = serial_read_nonblock(s->pipe_client_fd, dest, remaining);
+    if (n < 0) return -1;
+    if (n == 0) return 0;
+    s->pipe_input_offset += (int)n;
+    if (s->pipe_input_offset < (int)in_bytes) return 0;
+
+    /* Full input frame received — exchange with STM32 */
+    s->pipe_input_offset = 0;
+    if (serial_exchange(s) < 0) return -1;
+
+    /* Write outputs back to Python */
+    size_t out_bytes = (size_t)s->num_outputs * sizeof(float);
+    if (serial_write_exact(s->pipe_client_fd, s->output_vector, out_bytes) < 0) return -1;
+
+    dispatch_can(s);
+    return 1;
 }
 
 /* Send MIT enter or exit to every enabled MIT-mode mapping. */
@@ -517,16 +553,23 @@ static void edit_serial_popup(NNAppState *s)
             int b = atoi(baud_buf);
             if (b > 0) s->serial_baud = b;
             if (s->serial_fd >= 0) { close(s->serial_fd); s->serial_fd = -1; }
-            s->serial_rx_offset = 0;
-            s->serial_fd = serial_open(s->serial_port, s->serial_baud);
-            s->serial_ok = (s->serial_fd >= 0);
-            if (!s->serial_ok) {
-                snprintf(s->status_msg, sizeof(s->status_msg),
-                         "Cannot open %s: %s", s->serial_port, strerror(errno));
-                s->status_err = 1;
+            s->pipe_input_offset = 0;
+            /* [p] only reconnects serial; pipe transport is managed by mode (Tab) */
+            if (s->op_mode == OP_ACTIVE) {
+                s->serial_fd = serial_open(s->serial_port, s->serial_baud);
+                s->serial_ok = (s->serial_fd >= 0);
+                if (!s->serial_ok) {
+                    snprintf(s->status_msg, sizeof(s->status_msg),
+                             "Cannot open %s: %s", s->serial_port, strerror(errno));
+                    s->status_err = 1;
+                } else {
+                    snprintf(s->status_msg, sizeof(s->status_msg),
+                             "Serial %s @ %d baud", s->serial_port, s->serial_baud);
+                    s->status_err = 0;
+                }
             } else {
                 snprintf(s->status_msg, sizeof(s->status_msg),
-                         "Serial %s @ %d baud", s->serial_port, s->serial_baud);
+                         "Port saved (takes effect in ACTIVE mode)");
                 s->status_err = 0;
             }
             delwin(pop); touchwin(stdscr); refresh();
@@ -588,7 +631,7 @@ static void edit_dims_popup(NNAppState *s)
             int no = atoi(out_buf);
             if (ni >= 1 && ni <= MAX_INPUTS)  s->num_inputs  = ni;
             if (no >= 1 && no <= MAX_OUTPUTS) s->num_outputs = no;
-            s->serial_rx_offset = 0;
+            s->pipe_input_offset = 0;
             snprintf(s->status_msg, sizeof(s->status_msg),
                      "Dims: %d inputs, %d outputs", s->num_inputs, s->num_outputs);
             s->status_err = 0;
@@ -1004,12 +1047,19 @@ static void draw_header(const NNAppState *s, int cols)
     attron(A_BOLD | A_REVERSE);
     move(0, 0);
     for (int i = 0; i < cols; i++) addch(' ');
-    mvprintw(0, 1,
-             "NN Bridge  |  Serial: %s:%d [%s]  |  Mode: %s  |  CAN: %s [%s]",
-             s->serial_port, s->serial_baud,
-             s->serial_ok ? "OK" : "--",
-             s->op_mode == OP_ACTIVE ? "ACTIVE" : "PASSIVE",
-             s->can_iface, can_up ? "UP" : "DOWN");
+    if (s->op_mode == OP_PIPE) {
+        mvprintw(0, 1,
+                 "NN Bridge  |  PIPE [%s]  Serial: %s [%s]  |  Mode: PIPE  |  CAN: %s [%s]",
+                 s->pipe_client_fd >= 0 ? "CONNECTED" : "WAITING",
+                 s->serial_port, s->serial_ok ? "OK" : "--",
+                 s->can_iface, can_up ? "UP" : "DOWN");
+    } else {
+        mvprintw(0, 1,
+                 "NN Bridge  |  Serial: %s:%d [%s]  |  Mode: ACTIVE  |  CAN: %s [%s]",
+                 s->serial_port, s->serial_baud,
+                 s->serial_ok ? "OK" : "--",
+                 s->can_iface, can_up ? "UP" : "DOWN");
+    }
     attroff(A_BOLD | A_REVERSE);
 
     move(1, 0);
@@ -1198,10 +1248,10 @@ int main(void)
     s.can_bitrate = 1000000;
     s.num_inputs  = DEFAULT_NUM_INPUTS;
     s.num_outputs = DEFAULT_NUM_OUTPUTS;
-    s.mit.kp      = 5.0f;
-    s.mit.kd      = 0.1f;
+    s.mit.kp      = 1.00f;
+    s.mit.kd      = 0.90f;
     s.mit.t_ff    = 0.0f;
-    s.op_mode     = OP_ACTIVE;
+    s.op_mode     = OP_PIPE;
 
     s.input_vector  = (float *)calloc((size_t)MAX_INPUTS,  sizeof(float));
     s.output_vector = (float *)calloc((size_t)MAX_OUTPUTS, sizeof(float));
@@ -1224,16 +1274,33 @@ int main(void)
         init_pair(2, COLOR_GREEN, COLOR_BLACK);
     }
 
-    timeout(50);
+    timeout(5);
 
+    s.pipe_server_fd = -1;
+    s.pipe_client_fd = -1;
+
+    /* Serial is always needed (both ACTIVE and PIPE modes talk to STM32) */
     s.serial_fd = serial_open(s.serial_port, s.serial_baud);
     s.serial_ok = (s.serial_fd >= 0);
-    s.can_sock  = nn_can_open(s.can_iface);
+
+    /* In PIPE mode also open the Unix socket server for Python */
+    if (s.op_mode == OP_PIPE)
+        s.pipe_server_fd = open_pipe_server(PIPE_SOCKET_PATH);
+
+    s.can_sock = nn_can_open(s.can_iface);
 
     if (!s.serial_ok) {
         snprintf(s.status_msg, sizeof(s.status_msg),
                  "Serial %s not found — press [p] to configure", s.serial_port);
         s.status_err = 1;
+    } else if (s.op_mode == OP_PIPE && s.pipe_server_fd < 0) {
+        snprintf(s.status_msg, sizeof(s.status_msg),
+                 "Cannot create pipe socket — check /tmp permissions");
+        s.status_err = 1;
+    } else if (s.op_mode == OP_PIPE) {
+        snprintf(s.status_msg, sizeof(s.status_msg),
+                 "Waiting for pipe client on %s", PIPE_SOCKET_PATH);
+        s.status_err = 0;
     } else if (s.can_sock < 0) {
         snprintf(s.status_msg, sizeof(s.status_msg),
                  "CAN %s not open — press [c] or [u] to configure", s.can_iface);
@@ -1251,15 +1318,37 @@ int main(void)
         draw_status(&s, rows, cols);
         refresh();
 
+        /* Accept incoming pipe client (non-blocking) */
+        if (s.pipe_server_fd >= 0 && s.pipe_client_fd < 0) {
+            int client = accept(s.pipe_server_fd, NULL, NULL);
+            if (client >= 0) {
+                s.pipe_client_fd = client;
+                s.pipe_input_offset = 0;
+                snprintf(s.status_msg, sizeof(s.status_msg), "Pipe client connected");
+                s.status_err = 0;
+            }
+        }
+
         int ch = getch();
         switch (ch) {
         case 'q': case 'Q': goto quit;
 
         case '\t':
-            s.op_mode = (s.op_mode == OP_ACTIVE) ? OP_PASSIVE : OP_ACTIVE;
-            s.serial_rx_offset = 0;
-            snprintf(s.status_msg, sizeof(s.status_msg),
-                     "Mode: %s", s.op_mode == OP_ACTIVE ? "ACTIVE" : "PASSIVE");
+            s.op_mode = (s.op_mode == OP_ACTIVE) ? OP_PIPE : OP_ACTIVE;
+            s.pipe_input_offset = 0;
+            if (s.op_mode == OP_PIPE) {
+                /* Open pipe server; serial stays open for STM32 */
+                if (s.pipe_client_fd >= 0) { close(s.pipe_client_fd); s.pipe_client_fd = -1; }
+                if (s.pipe_server_fd >= 0) { close(s.pipe_server_fd); unlink(PIPE_SOCKET_PATH); }
+                s.pipe_server_fd = open_pipe_server(PIPE_SOCKET_PATH);
+                snprintf(s.status_msg, sizeof(s.status_msg),
+                         "PIPE — waiting for client on %s", PIPE_SOCKET_PATH);
+            } else {
+                /* Close pipe; serial stays open for STM32 */
+                if (s.pipe_client_fd >= 0) { close(s.pipe_client_fd); s.pipe_client_fd = -1; }
+                if (s.pipe_server_fd >= 0) { close(s.pipe_server_fd); unlink(PIPE_SOCKET_PATH); s.pipe_server_fd = -1; }
+                snprintf(s.status_msg, sizeof(s.status_msg), "ACTIVE");
+            }
             s.status_err = 0;
             break;
 
@@ -1367,20 +1456,26 @@ int main(void)
         default: break;
         }
 
-        /* ── serial I/O + CAN dispatch ── */
-        if (s.serial_fd >= 0 && s.op_mode == OP_PASSIVE) {
-            int r = serial_passive_read(&s);
+        /* ── PIPE I/O + CAN dispatch ── */
+        if (s.op_mode == OP_PIPE && s.pipe_client_fd >= 0 && s.serial_fd >= 0) {
+            int r = pipe_io(&s);
             if (r < 0) {
-                s.serial_ok = 0;
-            } else {
+                close(s.pipe_client_fd);
+                s.pipe_client_fd = -1;
+                s.pipe_input_offset = 0;
+                snprintf(s.status_msg, sizeof(s.status_msg),
+                         "Pipe disconnected — waiting for new client");
+                s.status_err = 1;
+            } else if (r == 1) {
                 s.serial_ok = 1;
-                if (r == 1) dispatch_can(&s);
             }
         }
     }
 
 quit:
     if (s.serial_fd >= 0) close(s.serial_fd);
+    if (s.pipe_client_fd >= 0) close(s.pipe_client_fd);
+    if (s.pipe_server_fd >= 0) { close(s.pipe_server_fd); unlink(PIPE_SOCKET_PATH); }
     if (s.can_sock  >= 0) close(s.can_sock);
     free(s.input_vector);
     free(s.output_vector);
