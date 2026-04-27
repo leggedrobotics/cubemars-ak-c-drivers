@@ -6,22 +6,23 @@ import os
 
 def generate_launch_description():
     config = os.path.join(
-        get_package_share_directory("cubemars_controller"),
-        "config", "config.yaml"
+        get_package_share_directory("cubemars_controller"), "config", "config.yaml"
     )
-    return LaunchDescription([
-        Node(
-            package="cubemars_controller",
-            executable="cubemars_controller_node",
-            name="cubemars_controller_node",
-            parameters=[config],
-            output="screen",
-        ),
-        Node(
-            package="cubemars_controller",
-            executable="cubemars_feedback_listener_node",
-            name="cubemars_feedback_listener_node",
-            parameters=[config],
-            output="screen",
-        ),
-    ])
+    return LaunchDescription(
+        [
+            Node(
+                package="cubemars_controller",
+                executable="cubemars_controller_node",
+                name="cubemars_controller_node",
+                parameters=[config],
+                output="screen",
+            ),
+            Node(
+                package="cubemars_controller",
+                executable="cubemars_feedback_listener_node",
+                name="cubemars_feedback_listener_node",
+                parameters=[config],
+                output="screen",
+            ),
+        ]
+    )
