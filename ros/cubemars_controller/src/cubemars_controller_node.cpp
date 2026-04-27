@@ -54,24 +54,24 @@ public:
         using EnterMIT = cubemars_msgs::srv::EnterMIT;
         enter_srv_ = create_service<EnterMIT>(
             "~/enter_mit",
-            [this](EnterMIT::Request::ConstSharedPtr req,
-                   EnterMIT::Response::SharedPtr res) {
+            [this](const std::shared_ptr<EnterMIT::Request> req,
+                   std::shared_ptr<EnterMIT::Response> res) {
                 res->success = send_frame(ak_enter_frame(req->motor_id));
             });
 
         using ExitMIT = cubemars_msgs::srv::ExitMIT;
         exit_srv_ = create_service<ExitMIT>(
             "~/exit_mit",
-            [this](ExitMIT::Request::ConstSharedPtr req,
-                   ExitMIT::Response::SharedPtr res) {
+            [this](const std::shared_ptr<ExitMIT::Request> req,
+                   std::shared_ptr<ExitMIT::Response> res) {
                 res->success = send_frame(ak_exit_frame(req->motor_id));
             });
 
         using SetZero = cubemars_msgs::srv::SetZero;
         zero_srv_ = create_service<SetZero>(
             "~/set_zero",
-            [this](SetZero::Request::ConstSharedPtr req,
-                   SetZero::Response::SharedPtr res) {
+            [this](const std::shared_ptr<SetZero::Request> req,
+                   std::shared_ptr<SetZero::Response> res) {
                 res->success = send_frame(ak_set_zero_frame(req->motor_id));
             });
 
