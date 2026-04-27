@@ -13,8 +13,10 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <cstring>
 #include <cerrno>
+#include <cstdio>
 #include <chrono>
 
 class CubemarsControllerNode : public rclcpp::Node
@@ -56,7 +58,11 @@ public:
             "~/enter_mit",
             [this](const std::shared_ptr<EnterMIT::Request> req,
                    std::shared_ptr<EnterMIT::Response> res) {
+                fprintf(stderr, "[cubemars] enter_mit called for motor %d\n", req->motor_id);
+                fflush(stderr);
                 res->success = send_frame(ak_enter_frame(req->motor_id));
+                fprintf(stderr, "[cubemars] enter_mit done, success=%d\n", res->success);
+                fflush(stderr);
             });
 
         using ExitMIT = cubemars_msgs::srv::ExitMIT;
@@ -64,7 +70,11 @@ public:
             "~/exit_mit",
             [this](const std::shared_ptr<ExitMIT::Request> req,
                    std::shared_ptr<ExitMIT::Response> res) {
+                fprintf(stderr, "[cubemars] exit_mit called for motor %d\n", req->motor_id);
+                fflush(stderr);
                 res->success = send_frame(ak_exit_frame(req->motor_id));
+                fprintf(stderr, "[cubemars] exit_mit done, success=%d\n", res->success);
+                fflush(stderr);
             });
 
         using SetZero = cubemars_msgs::srv::SetZero;
@@ -72,7 +82,11 @@ public:
             "~/set_zero",
             [this](const std::shared_ptr<SetZero::Request> req,
                    std::shared_ptr<SetZero::Response> res) {
+                fprintf(stderr, "[cubemars] set_zero called for motor %d\n", req->motor_id);
+                fflush(stderr);
                 res->success = send_frame(ak_set_zero_frame(req->motor_id));
+                fprintf(stderr, "[cubemars] set_zero done, success=%d\n", res->success);
+                fflush(stderr);
             });
 
         feedback_pub_ = create_publisher<cubemars_msgs::msg::MITFeedback>(
@@ -118,6 +132,8 @@ private:
             return -1;
         }
 
+        int flags = fcntl(s, F_GETFL, 0);
+        fcntl(s, F_SETFL, flags | O_NONBLOCK);
         return s;
     }
 
