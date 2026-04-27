@@ -123,25 +123,3 @@ printf("pos=%.2f deg  speed=%d ERPM  current=%.2f A  temp=%d°C\n",
 
 ---
 
-### Demo TUI
-
-The `demo` binary is a fully interactive ncurses application for exploring and testing motor commands without writing any code.
-
-```bash
-./build/demo
-```
-
-Key bindings inside the TUI:
-
-| Key | Action |
-|-----|--------|
-| `↑ / ↓` | Navigate command list |
-| `Enter` | Edit parameters and send command |
-| `i` | Set CAN interface name |
-| `u` | Bring interface up (prompts for bitrate) |
-| `d` | Bring interface down |
-| `m` | Set motor ID (1–255) |
-| `D` | Toggle live CAN dump (ring buffer, 200 frames) |
-| `q` | Quit |
-
-The three right-hand panels show the editable parameters for the selected command, the last transmitted CAN frame, and the latest decoded motor feedback in real time.

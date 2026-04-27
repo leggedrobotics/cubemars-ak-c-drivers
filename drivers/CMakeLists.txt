@@ -9,7 +9,7 @@ find_package(Curses REQUIRED)
 
 # Inference library
 
-file(GLOB LIB_SOURCES src/*.c)
+file(GLOB LIB_SOURCES ${PROJECT_SOURCE_DIR}/src/*.c)
 
 add_library(cubemars-drivers ${LIB_SOURCES})
 
