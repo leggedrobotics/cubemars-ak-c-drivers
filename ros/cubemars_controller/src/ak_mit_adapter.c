@@ -1,16 +1,11 @@
-/*
- * Single translation unit that owns the driver source so it shares the
- * static ak_model_idx variable with all driver functions.
- */
-#include "../../src/ak_mit.c"
-
 #include "ak_mit_adapter.h"
+#include "ak_mit.h"
 #include <string.h>
 
 void ak_set_model_by_name(const char *name) {
     for (int i = 0; i < NUM_MODELS; i++) {
         if (strcmp(MOTOR_MODELS[i].name, name) == 0) {
-            ak_model_idx = i;
+            ak_set_model_idx(i);
             return;
         }
     }

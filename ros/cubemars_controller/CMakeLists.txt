@@ -8,13 +8,17 @@ find_package(ament_cmake REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(cubemars_msgs REQUIRED)
 
+set(DRIVERS_DIR ${CMAKE_CURRENT_SOURCE_DIR}/../../drivers)
+
 add_executable(cubemars_controller_node
   src/cubemars_controller_node.cpp
   src/ak_mit_adapter.c
+  ${DRIVERS_DIR}/src/ak_mit.c
 )
 
 target_include_directories(cubemars_controller_node PRIVATE
   src/
+  ${DRIVERS_DIR}/inc
 )
 
 ament_target_dependencies(cubemars_controller_node

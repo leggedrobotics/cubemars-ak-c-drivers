@@ -30,6 +30,9 @@ static const int NUM_MODELS = (int)(sizeof(MOTOR_MODELS)/sizeof(MOTOR_MODELS[0])
 // Active motor model index – default AK40-10 (index 9)
 static int ak_model_idx = 9;  // default to AK40-10
 
+// Set the active model by index (0..NUM_MODELS-1); no-op if out of range
+void ak_set_model_idx(int idx);
+
 // Convert float to unsigned int with given bit-width
 int float_to_uint(float x, float x_min, float x_max, unsigned int bits);
 

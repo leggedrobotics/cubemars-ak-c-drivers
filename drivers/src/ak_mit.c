@@ -1,7 +1,12 @@
 #include "ak_mit.h"
+#include <stdint.h>
 
 float fminf(float a, float b) { return (a < b) ? a : b; }
 float fmaxf(float a, float b) { return (a > b) ? a : b; }
+
+void ak_set_model_idx(int idx) {
+    if (idx >= 0 && idx < NUM_MODELS) ak_model_idx = idx;
+}
 
 inline int float_to_uint(float x, float x_min, float x_max, unsigned int bits) {
     float span = x_max - x_min;
