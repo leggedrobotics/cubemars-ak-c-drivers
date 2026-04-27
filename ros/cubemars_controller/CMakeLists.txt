@@ -16,7 +16,18 @@ add_executable(cubemars_controller_node
   ${DRIVERS_DIR}/src/ak_mit.c
 )
 
+add_executable(cubemars_feedback_listener_node
+  src/cubemars_feedback_listener_node.cpp
+  src/ak_mit_adapter.c
+  ${DRIVERS_DIR}/src/ak_mit.c
+)
+
 target_include_directories(cubemars_controller_node PRIVATE
+  src/
+  ${DRIVERS_DIR}/inc
+)
+
+target_include_directories(cubemars_feedback_listener_node PRIVATE
   src/
   ${DRIVERS_DIR}/inc
 )
@@ -26,7 +37,12 @@ ament_target_dependencies(cubemars_controller_node
   cubemars_msgs
 )
 
-install(TARGETS cubemars_controller_node
+ament_target_dependencies(cubemars_feedback_listener_node
+  rclcpp
+  cubemars_msgs
+)
+
+install(TARGETS cubemars_controller_node cubemars_feedback_listener_node
   DESTINATION lib/${PROJECT_NAME}
 )
 

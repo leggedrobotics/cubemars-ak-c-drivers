@@ -16,5 +16,12 @@ def generate_launch_description():
             name="cubemars_controller_node",
             parameters=[config],
             output="screen",
-        )
+        ),
+        Node(
+            package="cubemars_controller",
+            executable="cubemars_feedback_listener_node",
+            name="cubemars_feedback_listener_node",
+            parameters=[config],
+            output="screen",
+        ),
     ])
