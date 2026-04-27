@@ -125,12 +125,13 @@ printf("pos=%.2f deg  speed=%d ERPM  current=%.2f A  temp=%d°C\n",
 
 ## ROS 2
 
-The `ros/` directory contains two ROS 2 packages:
+The `ros/` directory contains three ROS 2 packages:
 
 | Package | Description |
 |---------|-------------|
 | `cubemars_msgs` | Message and service definitions |
 | `cubemars_controller` | Node that bridges ROS topics/services to the CAN bus |
+| `cubemars_rviz_panel` | RViz 2 panel for interactive motor control and live feedback |
 
 ### Prerequisites
 
@@ -191,6 +192,39 @@ ros2 topic pub /cubemars_controller_node/mit_command cubemars_msgs/msg/MITComman
 ```bash
 ros2 topic echo /cubemars_controller_node/mit_feedback
 ```
+
+### RViz Panel
+
+`cubemars_rviz_panel` is a pluginlib-based RViz 2 panel that lets you control and monitor motors interactively without writing any code.
+
+**Features**
+- Add any number of motors by ID (1–127)
+- Per-motor MIT command inputs: position, velocity, kp, kd, torque feed-forward, send rate
+- Send a single command or start/stop continuous publishing at a configurable rate
+- Per-motor service buttons: Enter MIT, Exit MIT, Set Zero
+- Live feedback display: position, velocity, torque (from `/cubemars_controller_node/mit_feedback`)
+- Global "Enter MIT (all)" / "Exit MIT (all)" buttons
+- Panel state (which motor IDs are open) is saved and restored with the RViz config
+
+**Installation**
+
+The panel requires `rviz2` and Qt 5. Build with:
+
+```bash
+colcon build --packages-up-to cubemars_rviz_panel
+source install/setup.bash
+```
+
+(Running `colcon build` from `ros/` without arguments builds all three packages including the panel.)
+
+**Opening the panel in RViz 2**
+
+1. Start RViz 2 (the `cubemars_controller` node must already be running so the panel can reach its topics and services).
+2. In the menu bar: **Panels → Add New Panel**.
+3. Select `cubemars_rviz_panel / CubemarsPanel` and click **OK**.
+4. Click **Add Motor**, enter a motor ID, and the widget appears in the scrollable list.
+
+To persist the panel across sessions, save the RViz config after adding motors (**File → Save Config**).
 
 ---
 
