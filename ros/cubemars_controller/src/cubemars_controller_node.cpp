@@ -13,8 +13,8 @@
 #include <net/if.h>
 #include <sys/ioctl.h>
 #include <unistd.h>
-#include <fcntl.h>
 #include <cstring>
+#include <cerrno>
 #include <chrono>
 
 class CubemarsControllerNode : public rclcpp::Node
@@ -118,8 +118,6 @@ private:
             return -1;
         }
 
-        int flags = fcntl(s, F_GETFL, 0);
-        fcntl(s, F_SETFL, flags | O_NONBLOCK);
         return s;
     }
 
@@ -130,7 +128,12 @@ private:
         frame.can_id  = f.id;
         frame.can_dlc = f.len;
         memcpy(frame.data, f.data, f.len);
-        return write(sock_, &frame, sizeof(frame)) == static_cast<ssize_t>(sizeof(frame));
+        ssize_t n = write(sock_, &frame, sizeof(frame));
+        if (n != static_cast<ssize_t>(sizeof(frame))) {
+            RCLCPP_ERROR(get_logger(), "CAN write failed: %s", strerror(errno));
+            return false;
+        }
+        return true;
     }
 
     void poll_feedback()

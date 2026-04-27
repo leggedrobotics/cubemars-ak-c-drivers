@@ -123,3 +123,74 @@ printf("pos=%.2f deg  speed=%d ERPM  current=%.2f A  temp=%d°C\n",
 
 ---
 
+## ROS 2
+
+The `ros/` directory contains two ROS 2 packages:
+
+| Package | Description |
+|---------|-------------|
+| `cubemars_msgs` | Message and service definitions |
+| `cubemars_controller` | Node that bridges ROS topics/services to the CAN bus |
+
+### Prerequisites
+
+Bring up the CAN interface before launching (requires root):
+
+```bash
+sudo ip link set can0 type can bitrate 1000000
+sudo ip link set can0 up
+```
+
+### Build
+
+```bash
+cd ros
+colcon build
+source install/setup.bash
+```
+
+### Launch
+
+```bash
+ros2 launch cubemars_controller cubemars_controller.launch.py
+```
+
+Motor model and CAN interface are configured in `ros/cubemars_controller/config/config.yaml`.
+
+### Services
+
+**Enter MIT mode** (must be called before sending commands):
+
+```bash
+ros2 service call /cubemars_controller_node/enter_mit cubemars_msgs/srv/EnterMIT "{motor_id: 1}"
+```
+
+**Exit MIT mode:**
+
+```bash
+ros2 service call /cubemars_controller_node/exit_mit cubemars_msgs/srv/ExitMIT "{motor_id: 1}"
+```
+
+**Set zero position** (saves current position as the new zero):
+
+```bash
+ros2 service call /cubemars_controller_node/set_zero cubemars_msgs/srv/SetZero "{motor_id: 1}"
+```
+
+### Topics
+
+**Send an MIT command** (publishes to the subscriber):
+
+```bash
+ros2 topic pub /cubemars_controller_node/mit_command cubemars_msgs/msg/MITCommand \
+  "{motor_id: 1, p_des: 0.0, v_des: 0.0, kp: 10.0, kd: 1.0, t_ff: 0.0}"
+```
+
+**Monitor motor feedback** (only published when the motor replies to a command):
+
+```bash
+ros2 topic echo /cubemars_controller_node/mit_feedback
+```
+
+---
+
